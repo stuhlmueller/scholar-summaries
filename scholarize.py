@@ -25,7 +25,7 @@ def remove_stopwords(text):
     return " ".join(text_tokens)
 
 summarization_prompt = """
-State accurately what (if anything) the paper below say about the question "{question}".
+State accurately what (if anything) the paper below says about the question "{question}".
 
 Paper: "{text}"
 
