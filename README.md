@@ -2,7 +2,8 @@
 
 How to run:
 
-1. Check out the repository: `git clone git@github.com:stuhlmueller/scholar-summaries.git` and cd into the directory
+1. Check out the repository: `git clone git@github.com:stuhlmueller/scholar-summaries.git` 
+2. `cd scholar-summaries`
 2. Make a file `secrets` with contents like this:
 ```
 export semantic_scholar_api_key="..."
