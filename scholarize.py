@@ -91,7 +91,7 @@ def show_sorted_results(question, claims):
 
 def main():
     question = st.text_input(
-        "Research question", help="For example: How does poverty affect the brain?"
+        "Research question", help="For example: How does creatine affect cognition?"
     )
     google_query = remove_stopwords(question)
 
