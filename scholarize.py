@@ -84,7 +84,12 @@ def main():
         response = requests.get("https://api.semanticscholar.org/graph/v1/paper/search", params=params, headers=semantic_scholar_headers)
         response_json = response.json()
 
-        paper_id = response_json.get("data", [{}])[0].get("paperId")
+        data = response_json.get("data")
+        
+        if not data:
+            continue
+        
+        paper_id = data[0].get("paperId")
 
         if not paper_id:
             continue
