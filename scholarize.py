@@ -134,7 +134,7 @@ def main():
 
         title = scholar_result.get("title")
 
-        progress_text.write(f"Parsing {title}... ({i+1}/{len(scholar_results)})")
+        progress_text.write(f'Parsing "{title}"... ({i+1}/{len(scholar_results)})')
 
         if not title:
             continue
