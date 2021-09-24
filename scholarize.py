@@ -1,7 +1,6 @@
 import time
 import asyncio
 import aiohttp
-import nltk
 import openai
 import os
 import requests
@@ -9,15 +8,9 @@ import streamlit as st
 import itertools
 
 from dataclasses import dataclass
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 from serpapi import GoogleSearch
 from typing import Any
 
-
-nltk.download("punkt")
-nltk.download("stopwords")
-stop_words = set(stopwords.words("english"))
 
 semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
 serpapi_api_key = os.environ["serpapi_api_key"]
