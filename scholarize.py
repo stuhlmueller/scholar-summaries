@@ -126,6 +126,7 @@ def main():
     progress_text = st.empty()
 
     claims = []
+    seen_claim_texts = set()
 
     for (i, scholar_result) in enumerate(scholar_results):
 
@@ -174,7 +175,10 @@ def main():
         conclusions = list_conclusions(text=abstract)
 
         for conclusion in conclusions:
+            if conclusion in seen_claim_texts:
+                continue
             claims.append(Claim(text=conclusion, source=paper_detail))
+            seen_claim_texts.add(conclusion)
 
     bar.empty()
     progress_text.write("")
