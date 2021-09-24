@@ -91,11 +91,11 @@ def show_sorted_results(question, claims):
     for (score, claim) in scored_claims:
         with st.expander(claim.text):
             source = claim.source
-            st.markdown(f"*{source.get('title')}*")
+            st.markdown(f"[{source.get('title')}]({source.get('url')})")
             st.write(source.get("abstract"))
             authors = " ".join([author["name"] for author in source.get("authors")])
             st.write(
-                f"{source.get('citationCount')} citations - {source.get('year')} - {authors} - [url]({source.get('url')})"
+                f"{source.get('citationCount')} citations - {source.get('year')} - {authors}"
             )
 
 
