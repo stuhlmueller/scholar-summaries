@@ -103,7 +103,8 @@ def main():
     question = st.text_input(
         "Research question", help="For example: How does creatine affect cognition?"
     )
-    google_query = remove_stopwords(question)
+    # google_query = remove_stopwords(question)
+    google_query = question
 
     if not google_query:
         return
