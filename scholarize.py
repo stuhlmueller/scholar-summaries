@@ -63,10 +63,20 @@ def list_conclusions(text):
     return [line.strip("- ") for line in result_text.split("\n")]
 
 
-@dataclass(order=True)
+@dataclass(order=False)
 class Claim:
     source: Any
     text: str
+
+    def __lt__(self, other):
+        if isinstance(other, Claim):
+            return self.text < other.text
+        return True
+
+    def __gt__(self, other):
+        if isinstance(other, Claim):
+            return self.text > other.text
+        return False
 
 
 def show_sorted_results(question, claims):
