@@ -1,8 +1,12 @@
+import time
+import asyncio
+import aiohttp
 import nltk
 import openai
 import os
 import requests
 import streamlit as st
+import itertools
 
 from dataclasses import dataclass
 from nltk.corpus import stopwords
@@ -26,23 +30,6 @@ def remove_stopwords(text):
     text_tokens = word_tokenize(text)
     text_tokens = [w for w in text_tokens if not w in stop_words]
     return " ".join(text_tokens)
-
-
-summarization_prompt = """
-State accurately what (if anything) the paper below says about the question "{question}".
-
-Paper: "{text}"
-
-Question: What (if anything) does the paper say about the question "{question}"?
-Answer: The paper""".strip()
-
-
-def summarize(text, question):
-    prompt = summarization_prompt.format(text=text, question=question)
-    completion_result = openai.Completion.create(
-        engine="davinci-instruct-beta-v2", prompt=prompt, max_tokens=128, temperature=0
-    )
-    return completion_result["choices"][0]["text"].strip()
 
 
 conclusions_prompt = """
@@ -99,7 +86,59 @@ def show_sorted_results(question, claims):
             )
 
 
-def main():
+async def scholar_result_to_claims(session, scholar_result):
+    title = scholar_result.get("title")
+    if not title:
+        return [], "No title found"
+    params = {"query": title}
+    response = await session.get(
+        "https://api.semanticscholar.org/graph/v1/paper/search",
+        params=params,
+        headers=semantic_scholar_headers,
+    )
+    response_json = await response.json()
+    data = response_json.get("data")
+    if not data:
+        return [], title
+    paper_id = data[0].get("paperId")
+    if not paper_id:
+        return [], title
+    params = {"fields": "title,abstract,authors,citationCount,url,year"}
+    paper_detail_response = await session.get(
+        f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}",
+        params=params,
+        headers=semantic_scholar_headers,
+    )
+    paper_detail = await paper_detail_response.json()
+    abstract = paper_detail.get("abstract")
+    if not abstract:
+        return [], title
+    conclusions = list_conclusions(text=abstract)
+    claims = []
+    for conclusion in conclusions:
+        claims.append(Claim(text=conclusion, source=paper_detail))
+    return claims, title
+
+
+async def scholar_results_to_claims(scholar_results, set_progress):
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for scholar_result in scholar_results:
+            task = asyncio.create_task(scholar_result_to_claims(session, scholar_result))
+            task.title = scholar_result.get("title")
+            tasks.append(task)
+
+        i = 0
+        claims = []
+        for task in asyncio.as_completed(tasks):
+            task_claims, title = await task
+            claims += task_claims
+            i += 1
+            set_progress(i / len(tasks), f"Extracted claims from '{title}' ({i}/{len(tasks)})")
+        return claims
+
+
+async def main():
     question = st.text_input(
         "Research question", help="For example: How does creatine affect cognition?"
     )
@@ -113,6 +152,7 @@ def main():
         "engine": "google_scholar",
         "q": google_query,
         "api_key": serpapi_api_key,
+        "num": 15
     }
 
     search = GoogleSearch(params)
@@ -125,65 +165,32 @@ def main():
     bar = st.progress(0.0)
     progress_text = st.empty()
 
-    claims = []
+    def set_progress(perc, text):
+        bar.progress(perc)
+        progress_text.write(text)
+
+    claims = await scholar_results_to_claims(scholar_results, set_progress)
+
+    unique_claims = []
     seen_claim_texts = set()
-
-    for (i, scholar_result) in enumerate(scholar_results):
-
-        bar.progress((i + 1) / len(scholar_results))
-
-        title = scholar_result.get("title")
-
-        progress_text.write(f'Parsing "{title}"... ({i+1}/{len(scholar_results)})')
-
-        if not title:
+    for claim in claims:
+        if not isinstance(claim, Claim):
+            # Encountered exception
+            print(claim)
             continue
-
-        params = {"query": title}
-
-        response = requests.get(
-            "https://api.semanticscholar.org/graph/v1/paper/search",
-            params=params,
-            headers=semantic_scholar_headers,
-        )
-        response_json = response.json()
-
-        data = response_json.get("data")
-
-        if not data:
+        if claim.text in seen_claim_texts:
             continue
+        unique_claims.append(claim)
+        seen_claim_texts.add(claim.text)
 
-        paper_id = data[0].get("paperId")
+    bar.progress(1.0)
 
-        if not paper_id:
-            continue
+    progress_text.write("Ranking claims...")
 
-        params = {"fields": "title,abstract,authors,citationCount,url,year"}
-
-        paper_detail_response = requests.get(
-            f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}",
-            params=params,
-            headers=semantic_scholar_headers,
-        )
-
-        paper_detail = paper_detail_response.json()
-
-        abstract = paper_detail.get("abstract")
-        if not abstract:
-            continue
-
-        conclusions = list_conclusions(text=abstract)
-
-        for conclusion in conclusions:
-            if conclusion in seen_claim_texts:
-                continue
-            claims.append(Claim(text=conclusion, source=paper_detail))
-            seen_claim_texts.add(conclusion)
+    show_sorted_results(question, unique_claims)
 
     bar.empty()
     progress_text.write("")
 
-    show_sorted_results(question, claims)
 
-
-main()
+asyncio.run(main())
