@@ -55,7 +55,7 @@ Conclusions of the study (one sentence each):
 
 
 def list_conclusions(text):
-    prompt = conclusions_prompt.format(text=text)
+    prompt = conclusions_prompt.format(text=text[:4000])
     completion_result = openai.Completion.create(
         engine="davinci-instruct-beta-v2", prompt=prompt, max_tokens=256, temperature=0
     )
