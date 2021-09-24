@@ -1,11 +1,8 @@
-import time
 import asyncio
 import aiohttp
 import openai
 import os
-import requests
 import streamlit as st
-import itertools
 
 from dataclasses import dataclass
 from serpapi import GoogleSearch
@@ -131,7 +128,6 @@ async def scholar_results_to_claims(scholar_results, set_progress):
             )
             task.title = scholar_result.get("title")
             tasks.append(task)
-
         i = 0
         claims = []
         for task in asyncio.as_completed(tasks):
@@ -148,14 +144,12 @@ async def main():
     question = st.text_input(
         "Research question", help="For example: How does creatine affect cognition?"
     )
-    google_query = question
-
-    if not google_query:
+    if not question:
         return
 
     params = {
         "engine": "google_scholar",
-        "q": google_query,
+        "q": question,
         "api_key": serpapi_api_key,
         "num": 20,
     }
@@ -179,10 +173,6 @@ async def main():
     unique_claims = []
     seen_claim_texts = set()
     for claim in claims:
-        if not isinstance(claim, Claim):
-            # Encountered exception
-            print(claim)
-            continue
         if claim.text in seen_claim_texts:
             continue
         unique_claims.append(claim)
