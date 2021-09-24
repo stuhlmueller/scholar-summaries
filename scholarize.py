@@ -23,15 +23,9 @@ semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
 serpapi_api_key = os.environ["serpapi_api_key"]
 openai_api_key = os.environ["openai_api_key"]
 
-openai.api_key = os.environ["openai_api_key"]
+openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
-
-
-def remove_stopwords(text):
-    text_tokens = word_tokenize(text)
-    text_tokens = [w for w in text_tokens if not w in stop_words]
-    return " ".join(text_tokens)
 
 
 conclusions_prompt = """
@@ -161,7 +155,6 @@ async def main():
     question = st.text_input(
         "Research question", help="For example: How does creatine affect cognition?"
     )
-    # google_query = remove_stopwords(question)
     google_query = question
 
     if not google_query:
