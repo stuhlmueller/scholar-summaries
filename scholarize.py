@@ -21,6 +21,8 @@ stop_words = set(stopwords.words("english"))
 
 semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
 serpapi_api_key = os.environ["serpapi_api_key"]
+openai_api_key = os.environ["openai_api_key"]
+
 openai.api_key = os.environ["openai_api_key"]
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
@@ -41,11 +43,24 @@ Conclusions of the study (one sentence each):
 -""".strip()
 
 
-def list_conclusions(text):
+async def list_conclusions(session, text):
     prompt = conclusions_prompt.format(text=text[:4000])
-    completion_result = openai.Completion.create(
-        engine="davinci-instruct-beta-v2", prompt=prompt, max_tokens=256, temperature=0
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {openai_api_key}",
+    }
+    engine = "davinci-instruct-beta-v2"
+    data = {
+        "prompt": prompt,
+        "max_tokens": 256,
+        "temperature": 0
+    }
+    response = await session.post(
+        f"https://api.openai.com/v1/engines/{engine}/completions",
+        json=data,
+        headers=headers,
     )
+    completion_result = await response.json()
     result_text = completion_result["choices"][0]["text"].strip()
     return [line.strip("- ") for line in result_text.split("\n")]
 
@@ -113,7 +128,7 @@ async def scholar_result_to_claims(session, scholar_result):
     abstract = paper_detail.get("abstract")
     if not abstract:
         return [], title
-    conclusions = list_conclusions(text=abstract)
+    conclusions = await list_conclusions(session, text=abstract)
     claims = []
     for conclusion in conclusions:
         claims.append(Claim(text=conclusion, source=paper_detail))
@@ -124,7 +139,9 @@ async def scholar_results_to_claims(scholar_results, set_progress):
     async with aiohttp.ClientSession() as session:
         tasks = []
         for scholar_result in scholar_results:
-            task = asyncio.create_task(scholar_result_to_claims(session, scholar_result))
+            task = asyncio.create_task(
+                scholar_result_to_claims(session, scholar_result)
+            )
             task.title = scholar_result.get("title")
             tasks.append(task)
 
@@ -134,7 +151,9 @@ async def scholar_results_to_claims(scholar_results, set_progress):
             task_claims, title = await task
             claims += task_claims
             i += 1
-            set_progress(i / len(tasks), f"Extracted claims from '{title}' ({i}/{len(tasks)})")
+            set_progress(
+                i / len(tasks), f"Extracted claims from '{title}' ({i}/{len(tasks)})"
+            )
         return claims
 
 
@@ -152,7 +171,7 @@ async def main():
         "engine": "google_scholar",
         "q": google_query,
         "api_key": serpapi_api_key,
-        "num": 15
+        "num": 20,
     }
 
     search = GoogleSearch(params)
