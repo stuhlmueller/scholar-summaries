@@ -46,11 +46,11 @@ def summarize(text, question):
 
 
 conclusions_prompt = """
-List the main conclusions of the following study
+Accurately list all of the conclusions of the following study:
 
-Study abstract: "{text}"
+Abstract of the study: "{text}"
 
-Study conclusions:
+Conclusions of the study (one sentence each):
 -""".strip()
 
 
