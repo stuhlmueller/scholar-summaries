@@ -3,10 +3,12 @@ import aiohttp
 import openai
 import os
 import streamlit as st
+import nest_asyncio
 
 from dataclasses import dataclass
 from serpapi import GoogleSearch
 from typing import Any
+from sentence_transformers import CrossEncoder
 
 
 semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
@@ -17,6 +19,11 @@ openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 
+@st.cache(hash_funcs={CrossEncoder: (lambda _: None)})
+def get_msmarco_encoder():
+    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-12-v2', max_length=512)
+
+msmarco_encoder = get_msmarco_encoder()
 
 conclusions_prompt = """
 Accurately list all of the conclusions of the following study:
@@ -65,7 +72,8 @@ class Claim:
         return False
 
 
-def show_sorted_results(question, claims):
+@st.cache(persist=True, show_spinner=False)
+def score_claims_openai(question, claims):
     documents = [claim.text for claim in claims]
     results = openai.Engine(id="babbage-search-index-v1").search(
         documents=documents, query=question, version="alpha"
@@ -74,6 +82,19 @@ def show_sorted_results(question, claims):
         [(datum["score"], claim) for (datum, claim) in zip(results["data"], claims)],
         reverse=True,
     )
+    return scored_claims
+
+
+@st.cache(persist=True, show_spinner=False)
+def score_claims_msmarco(question, claims):
+    scores = msmarco_encoder.predict(
+        [(question, claim.text) for claim in claims])
+    scored_claims = sorted(zip(scores, claims), reverse=True)
+    return scored_claims
+
+
+def show_sorted_results(question, claims):
+    scored_claims = score_claims_msmarco(question, claims)
     for (score, claim) in scored_claims:
         with st.expander(claim.text):
             source = claim.source
@@ -119,7 +140,7 @@ async def scholar_result_to_claims(session, scholar_result):
     return claims, title
 
 
-async def scholar_results_to_claims(scholar_results, set_progress):
+async def async_scholar_results_to_claims(scholar_results, set_progress):
     async with aiohttp.ClientSession() as session:
         tasks = []
         for scholar_result in scholar_results:
@@ -140,7 +161,24 @@ async def scholar_results_to_claims(scholar_results, set_progress):
         return claims
 
 
-async def main():
+def get_event_loop():
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # no event loop running:
+        loop = asyncio.new_event_loop()
+    else:
+        nest_asyncio.apply()
+    return loop
+
+
+@st.cache(suppress_st_warning=True, persist=True, show_spinner=False)
+def scholar_results_to_claims(scholar_results, set_progress):
+    loop = get_event_loop()    
+    result = loop.run_until_complete(async_scholar_results_to_claims(scholar_results, set_progress))
+    return result
+
+
+def main():
     question = st.text_input(
         "Research question", help="For example: How does creatine affect cognition?"
     )
@@ -168,7 +206,7 @@ async def main():
         bar.progress(perc)
         progress_text.write(text)
 
-    claims = await scholar_results_to_claims(scholar_results, set_progress)
+    claims = scholar_results_to_claims(scholar_results, set_progress)
 
     unique_claims = []
     seen_claim_texts = set()
@@ -188,4 +226,4 @@ async def main():
     progress_text.write("")
 
 
-asyncio.run(main())
+main()
