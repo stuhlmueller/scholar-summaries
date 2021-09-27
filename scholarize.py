@@ -179,9 +179,12 @@ def scholar_results_to_claims(scholar_results, set_progress):
 
 
 def main():
+    app_state = st.experimental_get_query_params()
+    url_question = app_state.get("q", [""])[0]
     question = st.text_input(
-        "Research question", help="For example: How does creatine affect cognition?"
+        "Research question", value=url_question, help="For example: How does creatine affect cognition?"
     )
+    st.experimental_set_query_params(q=question)
     if not question:
         return
 
