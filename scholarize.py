@@ -4,11 +4,11 @@ import openai
 import os
 import streamlit as st
 import nest_asyncio
+import sentence_transformers
 
-from dataclasses import dataclass
 from serpapi import GoogleSearch
-from typing import Any
 from sentence_transformers import CrossEncoder
+from claim import Claim
 
 
 semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
@@ -19,9 +19,11 @@ openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 
-@st.cache(hash_funcs={CrossEncoder: (lambda _: None)})
+
+@st.cache(hash_funcs={CrossEncoder: (lambda _: ("msmarco", None))})
 def get_msmarco_encoder():
-    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-12-v2', max_length=512)
+    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2", max_length=512)
+
 
 msmarco_encoder = get_msmarco_encoder()
 
@@ -55,11 +57,7 @@ async def list_conclusions(session, text):
         "Authorization": f"Bearer {openai_api_key}",
     }
     engine = "davinci-instruct-beta-v2"
-    data = {
-        "prompt": prompt,
-        "max_tokens": 600,
-        "temperature": 0
-    }
+    data = {"prompt": prompt, "max_tokens": 600, "temperature": 0}
     response = await session.post(
         f"https://api.openai.com/v1/engines/{engine}/completions",
         json=data,
@@ -70,60 +68,39 @@ async def list_conclusions(session, text):
     return [line.strip("- ") for line in result_text.split("\n")]
 
 
-@dataclass(order=False)
-class Claim:
-    source: Any
-    text: str
-
-    def __lt__(self, other):
-        if isinstance(other, Claim):
-            return self.text < other.text
-        return True
-
-    def __gt__(self, other):
-        if isinstance(other, Claim):
-            return self.text > other.text
-        return False
-
-
-@st.cache(persist=True, show_spinner=False)
+@st.cache(persist=True, show_spinner=False, allow_output_mutation=True)
 def score_claims_openai(question, claims):
     documents = [claim.text for claim in claims]
     results = openai.Engine(id="babbage-search-index-v1").search(
         documents=documents, query=question, version="alpha"
     )
-    scored_claims = sorted(
-        [(datum["score"], claim) for (datum, claim) in zip(results["data"], claims)],
-        reverse=True,
-    )
-    return scored_claims
+    return [(datum["score"], claim) for (datum, claim) in zip(results["data"], claims)]
 
 
-@st.cache(persist=True, show_spinner=False)
 def score_claims_msmarco(question, claims):
-    scores = msmarco_encoder.predict(
-        [(question, claim.text) for claim in claims])
-    scored_claims = sorted(zip(scores, claims), reverse=True)
-    return scored_claims
+    scores = msmarco_encoder.predict([(question, claim.text) for claim in claims])
+    return zip(scores, claims)
 
 
-def show_sorted_results(question, claims):
+def sort_score_claims(question, claims):
     scored_claims = score_claims_msmarco(question, claims)
-    for (score, claim) in scored_claims:
-        with st.expander(claim.text):
-            source = claim.source
-            st.markdown(f"[{source.get('title')}]({source.get('url')})")
-            st.write(source.get("abstract"))
-            authors = " ".join([author["name"] for author in source.get("authors")])
-            st.write(
-                f"{source.get('citationCount')} citations - {source.get('year')} - {authors}"
-            )
+    return sorted(scored_claims, reverse=True)
 
 
 async def scholar_result_to_claims(session, scholar_result):
+
+    cache_key = scholar_result.get("link", scholar_result["title"])
+    if cache_key in st.session_state.claims:
+        claims = st.session_state.claims[cache_key]
+        return claims
+
+    def cache(*values):
+        st.session_state.claims[cache_key] = values
+        return values
+
     title = scholar_result.get("title")
     if not title:
-        return [], "No title found"
+        return cache([], "No title found")
     params = {"query": title}
     response = await session.get(
         "https://api.semanticscholar.org/graph/v1/paper/search",
@@ -133,10 +110,10 @@ async def scholar_result_to_claims(session, scholar_result):
     response_json = await response.json()
     data = response_json.get("data")
     if not data:
-        return [], title
+        return cache([], title)
     paper_id = data[0].get("paperId")
     if not paper_id:
-        return [], title
+        return cache([], title)
     params = {"fields": "title,abstract,authors,citationCount,url,year"}
     paper_detail_response = await session.get(
         f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}",
@@ -146,12 +123,12 @@ async def scholar_result_to_claims(session, scholar_result):
     paper_detail = await paper_detail_response.json()
     abstract = paper_detail.get("abstract")
     if not abstract:
-        return [], title
+        return cache([], title)
     conclusions = await list_conclusions(session, text=abstract)
     claims = []
     for conclusion in conclusions:
         claims.append(Claim(text=conclusion, source=paper_detail))
-    return claims, title
+    return cache(claims, title)
 
 
 async def async_scholar_results_to_claims(scholar_results, set_progress):
@@ -185,39 +162,82 @@ def get_event_loop():
     return loop
 
 
-@st.cache(suppress_st_warning=True, persist=True, show_spinner=False)
 def scholar_results_to_claims(scholar_results, set_progress):
-    loop = get_event_loop()    
-    result = loop.run_until_complete(async_scholar_results_to_claims(scholar_results, set_progress))
+    loop = get_event_loop()
+    result = loop.run_until_complete(
+        async_scholar_results_to_claims(scholar_results, set_progress)
+    )
     return result
 
 
+def filter_scholar_results(scholar_results, min_citations):
+    filtered = []
+    for result in scholar_results:
+        inline_links = result.get("inline_links")
+        if not inline_links:
+            continue
+        cited_by = inline_links.get("cited_by")
+        if not cited_by:
+            continue
+        total = int(cited_by.get("total", 0))
+        if total > min_citations:
+            filtered.append(result)
+    return filtered
+
+
+@st.cache(suppress_st_warning=True, persist=True, show_spinner=False)
+def get_scholar_results(query, min_year):
+    params = {
+        "engine": "google_scholar",
+        "q": query,
+        "api_key": serpapi_api_key,
+        "num": 20,
+        "as_ylo": min_year,
+    }
+    search = GoogleSearch(params)
+    data = search.get_dict()
+    return data["organic_results"]
+
+
 def main():
+
+    if "claims" not in st.session_state:
+        st.session_state["claims"] = {}
+
     app_state = st.experimental_get_query_params()
     url_question = app_state.get("q", [""])[0]
     question = st.text_input(
-        "Research question", value=url_question, help="For example: How does creatine affect cognition?"
+        "Research question",
+        value=url_question,
+        help="For example: How does creatine affect cognition?",
     )
     st.experimental_set_query_params(q=question)
+
+    with st.expander("Options"):
+        col1, col2 = st.columns(2)
+        with col1:
+            min_year = st.number_input(
+                "Year at least", min_value=1950, max_value=2021, value=2011
+            )
+        with col2:
+            min_citations = st.number_input("Citations at least", min_value=0, value=10)
+
     if not question:
-        return
-
-    params = {
-        "engine": "google_scholar",
-        "q": question,
-        "api_key": serpapi_api_key,
-        "num": 20,
-    }
-
-    search = GoogleSearch(params)
-    results = search.get_dict()
-    scholar_results = results["organic_results"]
-
-    if not scholar_results:
         return
 
     bar = st.progress(0.0)
     progress_text = st.empty()
+
+    progress_text.write("Retrieving papers...")
+
+    raw_scholar_results = get_scholar_results(question, min_year)
+
+    scholar_results = filter_scholar_results(raw_scholar_results, min_citations)
+
+    if not scholar_results:
+        return
+
+    progress_text.write("Extracting claims...")
 
     def set_progress(perc, text):
         bar.progress(perc)
@@ -237,7 +257,17 @@ def main():
 
     progress_text.write("Ranking claims...")
 
-    show_sorted_results(question, unique_claims)
+    sorted_scored_claims = sort_score_claims(question, unique_claims)
+
+    for (score, claim) in sorted_scored_claims:
+        with st.expander(claim.text):
+            source = claim.source
+            st.markdown(f"[{source.get('title')}]({source.get('url')})")
+            st.write(source.get("abstract"))
+            authors = " ".join([author["name"] for author in source.get("authors")])
+            st.write(
+                f"{source.get('citationCount')} citations - {source.get('year')} - {authors}"
+            )
 
     bar.empty()
     progress_text.write("")
