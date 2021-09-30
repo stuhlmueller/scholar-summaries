@@ -149,21 +149,6 @@ def scholar_results_to_claims(scholar_results, set_progress):
     return result
 
 
-def filter_scholar_results(scholar_results, min_citations):
-    filtered = []
-    for result in scholar_results:
-        inline_links = result.get("inline_links")
-        if not inline_links:
-            continue
-        cited_by = inline_links.get("cited_by")
-        if not cited_by:
-            continue
-        total = int(cited_by.get("total", 0))
-        if total > min_citations:
-            filtered.append(result)
-    return filtered
-
-
 @st.cache(suppress_st_warning=True, persist=True, show_spinner=False)
 def get_scholar_results(query, min_year):
     params = {
@@ -176,6 +161,17 @@ def get_scholar_results(query, min_year):
     search = GoogleSearch(params)
     data = search.get_dict()
     return data["organic_results"]
+
+
+def get_unique_claims(claims):
+    unique_claims = []
+    seen_claim_texts = set()
+    for claim in claims:
+        if claim.text in seen_claim_texts:
+            continue
+        unique_claims.append(claim)
+        seen_claim_texts.add(claim.text)
+    return unique_claims
 
 
 def main():
@@ -209,9 +205,7 @@ def main():
 
     progress_text.write("Retrieving papers...")
 
-    raw_scholar_results = get_scholar_results(question, min_year)
-
-    scholar_results = filter_scholar_results(raw_scholar_results, min_citations)
+    scholar_results = get_scholar_results(question, min_year)
 
     if not scholar_results:
         return
@@ -224,13 +218,7 @@ def main():
 
     claims = scholar_results_to_claims(scholar_results, set_progress)
 
-    unique_claims = []
-    seen_claim_texts = set()
-    for claim in claims:
-        if claim.text in seen_claim_texts:
-            continue
-        unique_claims.append(claim)
-        seen_claim_texts.add(claim.text)
+    unique_claims = get_unique_claims(claims)
 
     bar.progress(1.0)
 
@@ -239,14 +227,16 @@ def main():
     sorted_scored_claims = sort_score_claims(question, unique_claims)
 
     for (score, claim) in sorted_scored_claims:
-        with st.expander(claim.text):
-            source = claim.source
-            st.markdown(f"[{source.get('title')}]({source.get('url')})")
-            st.write(source.get("abstract"))
-            authors = " ".join([author["name"] for author in source.get("authors")])
-            st.write(
-                f"{source.get('citationCount')} citations - {source.get('year')} - {authors}"
-            )
+        source = claim.source
+        citation_count = source.get("citationCount")
+        if citation_count > min_citations:
+            with st.expander(claim.text):
+                st.markdown(f"[{source.get('title')}]({source.get('url')})")
+                st.write(source.get("abstract"))
+                authors = " ".join([author["name"] for author in source.get("authors")])
+                st.write(
+                    f"{citation_count} citations - {source.get('year')} - {authors}"
+                )
 
     bar.empty()
     progress_text.write("")
