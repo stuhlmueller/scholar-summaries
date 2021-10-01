@@ -93,7 +93,7 @@ async def scholar_result_to_claims(session, scholar_result):
     paper_id = data[0].get("paperId")
     if not paper_id:
         return cache([], title)
-    params = {"fields": "title,abstract,authors,citationCount,url,year"}
+    params = {"fields": "title,abstract,venue,authors,citationCount,url,year"}
     paper_detail_response = await session.get(
         f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}",
         params=params,
@@ -196,6 +196,7 @@ def main():
             )
         with col2:
             min_citations = st.number_input("Citations at least", min_value=0, value=10)
+        require_venue = st.checkbox("Only include publications with venue (journal or conference)", value=True)
 
     if not question:
         return
@@ -226,17 +227,47 @@ def main():
 
     sorted_scored_claims = sort_score_claims(question, unique_claims)
 
+    st.markdown(
+        """
+<style>
+.streamlit-expander {
+    border-color: #fff;
+}
+.streamlit-expanderHeader {
+    justify-content: right;
+}
+.authors {
+    color: #777;
+}
+</style>""",
+        unsafe_allow_html=True
+    )
+
+    seen_source_titles = set()
+    
     for (score, claim) in sorted_scored_claims:
         source = claim.source
-        citation_count = source.get("citationCount")
-        if citation_count > min_citations:
-            with st.expander(claim.text):
-                st.markdown(f"[{source.get('title')}]({source.get('url')})")
-                st.write(source.get("abstract"))
-                authors = " ".join([author["name"] for author in source.get("authors")])
-                st.write(
-                    f"{citation_count} citations - {source.get('year')} - {authors}"
-                )
+        if not source["title"] in seen_source_titles:
+            seen_source_titles.add(source["title"])
+            citation_count = source.get("citationCount")
+            authors = source.get("authors")
+            first_author_name = authors[0]["name"]
+            if len(authors) > 1:
+                author_text = f"{first_author_name} et al"
+            else:
+                author_text = first_author_name
+            # authors = " ".join([author["name"] for author in source.get("authors")])
+            year = source.get('year')
+            venue = source.get("venue")
+            if citation_count > min_citations and ((venue != "") or not require_venue):
+                st.markdown(f"""<span class="authors">{author_text}, {year}:</span>
+> {claim.text}
+""", unsafe_allow_html=True)
+                with st.expander(f""):
+                    st.markdown(f"[{source.get('title')}]({source.get('url')})")
+                    st.write(source.get("abstract"))
+                    st.write(venue)
+                    st.write(f"{citation_count} citations")
 
     bar.empty()
     progress_text.write("")
