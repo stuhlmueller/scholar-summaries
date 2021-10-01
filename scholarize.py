@@ -176,8 +176,28 @@ def get_unique_claims(claims):
 
 def main():
 
+    # Setup
+    
     if "claims" not in st.session_state:
         st.session_state["claims"] = {}
+
+    st.markdown(
+        """
+<style>
+.streamlit-expander {
+    border-color: #fff;
+}
+.streamlit-expanderHeader {
+    justify-content: right;
+}
+.authors {
+    color: #777;
+}
+</style>""",
+        unsafe_allow_html=True
+    )
+
+    # --
 
     app_state = st.experimental_get_query_params()
     url_question = app_state.get("q", [""])[0]
@@ -226,22 +246,6 @@ def main():
     progress_text.write("Ranking claims...")
 
     sorted_scored_claims = sort_score_claims(question, unique_claims)
-
-    st.markdown(
-        """
-<style>
-.streamlit-expander {
-    border-color: #fff;
-}
-.streamlit-expanderHeader {
-    justify-content: right;
-}
-.authors {
-    color: #777;
-}
-</style>""",
-        unsafe_allow_html=True
-    )
 
     seen_source_titles = set()
     
