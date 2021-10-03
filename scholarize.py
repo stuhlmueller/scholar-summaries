@@ -2,9 +2,10 @@ import asyncio
 import aiohttp
 import openai
 import os
+import spacy
 import streamlit as st
 import nest_asyncio
-import sentence_transformers
+import thinc
 
 from serpapi import GoogleSearch
 from sentence_transformers import CrossEncoder
@@ -20,13 +21,26 @@ openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 
+hash_funcs = {
+    spacy.language.Language: (lambda _: ("spacy_language", None)),
+    spacy.vocab.Vocab: (lambda _: ("spacy_vocab", None)),
+    spacy.pipeline.tok2vec.Tok2Vec: (lambda _: ("spacy_tok2vec", None)),
+    thinc.model.Model: (lambda _: ("thinc_model", None)),
+    CrossEncoder: (lambda _: ("cross_encoder", None))
+}
 
-@st.cache(hash_funcs={CrossEncoder: (lambda _: ("msmarco", None))})
+@st.cache(hash_funcs=hash_funcs)
 def get_msmarco_encoder():
     return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2", max_length=512)
 
+@st.cache(hash_funcs=hash_funcs)
+def get_spacy_nlp():
+    os.system("python3 -m spacy download en_core_web_sm")
+    return spacy.load("en_core_web_sm")
+
 
 msmarco_encoder = get_msmarco_encoder()
+spacy_nlp = get_spacy_nlp()
 
 
 async def list_conclusions(session, text):
@@ -174,10 +188,25 @@ def get_unique_claims(claims):
     return unique_claims
 
 
+def text_to_sentences(text: str):
+    """
+    Convert text to sentences using spacy
+    """
+    doc = spacy_nlp(text)
+    return [sent.text for sent in doc.sents]
+
+
+def markdown_list(lines: list[str]):
+    """
+    Render list of lines as markdown list
+    """
+    return "\n".join(f"- {line}" for line in lines)
+
+
 def main():
 
     # Setup
-    
+
     if "claims" not in st.session_state:
         st.session_state["claims"] = {}
 
@@ -193,8 +222,11 @@ def main():
 .authors {
     color: #777;
 }
+p {
+    margin: .5rem 0px;
+}
 </style>""",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     # --
@@ -216,7 +248,9 @@ def main():
             )
         with col2:
             min_citations = st.number_input("Citations at least", min_value=0, value=10)
-        require_venue = st.checkbox("Only include publications with venue (journal or conference)", value=True)
+        require_venue = st.checkbox(
+            "Only include publications with venue (journal or conference)", value=True
+        )
 
     if not question:
         return
@@ -248,7 +282,7 @@ def main():
     sorted_scored_claims = sort_score_claims(question, unique_claims)
 
     seen_source_titles = set()
-    
+
     for (score, claim) in sorted_scored_claims:
         source = claim.source
         if not source["title"] in seen_source_titles:
@@ -261,17 +295,24 @@ def main():
             else:
                 author_text = first_author_name
             # authors = " ".join([author["name"] for author in source.get("authors")])
-            year = source.get('year')
+            year = source.get("year")
             venue = source.get("venue")
             if citation_count > min_citations and ((venue != "") or not require_venue):
-                st.markdown(f"""<span class="authors">{author_text}, {year}:</span>
+                st.markdown(
+                    f"""<span class="authors">{author_text}, {year}:</span>
 > {claim.text}
-""", unsafe_allow_html=True)
+""",
+                    unsafe_allow_html=True,
+                )
                 with st.expander(f""):
-                    st.markdown(f"[{source.get('title')}]({source.get('url')})")
-                    st.write(source.get("abstract"))
-                    st.write(venue)
-                    st.write(f"{citation_count} citations")
+                    st.markdown(
+                        f"""
+[{source.get('title')}]({source.get('url')})
+
+{markdown_list(text_to_sentences(source.get("abstract")))}
+- *{citation_count} citations @ {venue}*
+"""
+                    )
 
     bar.empty()
     progress_text.write("")
