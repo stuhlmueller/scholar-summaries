@@ -5,7 +5,6 @@ import os
 import spacy
 import streamlit as st
 import nest_asyncio
-import thinc
 
 from serpapi import GoogleSearch
 from sentence_transformers import CrossEncoder
@@ -24,8 +23,6 @@ semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 hash_funcs = {
     spacy.language.Language: (lambda _: ("spacy_language", None)),
     spacy.vocab.Vocab: (lambda _: ("spacy_vocab", None)),
-    spacy.pipeline.tok2vec.Tok2Vec: (lambda _: ("spacy_tok2vec", None)),
-    thinc.model.Model: (lambda _: ("thinc_model", None)),
     CrossEncoder: (lambda _: ("cross_encoder", None))
 }
 
