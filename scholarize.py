@@ -26,11 +26,11 @@ hash_funcs = {
     CrossEncoder: (lambda _: ("cross_encoder", None))
 }
 
-@st.cache(hash_funcs=hash_funcs)
+@st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
 def get_msmarco_encoder():
     return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2", max_length=512)
 
-@st.cache(hash_funcs=hash_funcs)
+@st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
 def get_spacy_nlp():
     try:
         os.system("python -m spacy download en_core_web_sm")
