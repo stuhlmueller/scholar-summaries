@@ -5,6 +5,7 @@ import os
 import spacy
 import streamlit as st
 import nest_asyncio
+import urllib
 
 from serpapi import GoogleSearch
 from sentence_transformers import CrossEncoder
@@ -23,12 +24,14 @@ semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 hash_funcs = {
     spacy.language.Language: (lambda _: ("spacy_language", None)),
     spacy.vocab.Vocab: (lambda _: ("spacy_vocab", None)),
-    CrossEncoder: (lambda _: ("cross_encoder", None))
+    CrossEncoder: (lambda _: ("cross_encoder", None)),
 }
+
 
 @st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
 def get_msmarco_encoder():
     return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2", max_length=512)
+
 
 @st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
 def get_spacy_nlp():
@@ -317,6 +320,18 @@ p {
 
     bar.empty()
     progress_text.write("")
+
+    encoded_question = urllib.parse.quote(question)
+    st.markdown(
+        f"""
+<div align="center">
+  <a href="https://www.google.com/search?q={encoded_question}" target="_blank">Google</a> -
+  <a href="https://scholar.google.com/scholar?q={encoded_question}">Google Scholar</a> -
+  <a href="https://www.semanticscholar.org/search?q={encoded_question}">Semantic Scholar</a>
+  </div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 main()
