@@ -197,7 +197,7 @@ def text_to_sentences(text: str):
     return [sent.text for sent in doc.sents]
 
 
-def markdown_list(lines: list[str]):
+def markdown_list(lines):
     """
     Render list of lines as markdown list
     """
