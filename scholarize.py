@@ -290,7 +290,7 @@ p {
             seen_source_titles.add(source["title"])
             citation_count = source.get("citationCount")
             authors = source.get("authors")
-            first_author_name = authors[0]["name"]
+            first_author_name = authors[0]["name"] if authors else "Unknown"
             if len(authors) > 1:
                 author_text = f"{first_author_name} et al"
             else:
