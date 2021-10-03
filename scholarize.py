@@ -35,7 +35,11 @@ def get_msmarco_encoder():
 
 @st.cache(hash_funcs=hash_funcs)
 def get_spacy_nlp():
-    os.system("python -m spacy download en_core_web_sm")
+    try:
+        os.system("python -m spacy download en_core_web_sm")
+    except Exception as e:
+        print(f"Failed to download en_core_web_sm")
+        print(e)
     return spacy.load("en_core_web_sm")
 
 
