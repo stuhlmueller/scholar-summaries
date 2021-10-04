@@ -52,7 +52,7 @@ async def list_conclusions(session, text):
     response = await session.post(
         f"https://api.openai.com/v1/engines/{engine}/completions",
         json=data,
-        headers=headers,
+        headers=headers
     )
     completion_result = await response.json()
     result_text = completion_result["choices"][0]["text"].strip()
@@ -74,6 +74,8 @@ def score_claims_msmarco(question, claims):
 
 
 def sort_score_claims(question, claims):
+    if not claims:
+        return []
     scored_claims = score_claims_msmarco(question, claims)
     return sorted(scored_claims, reverse=True)
 
@@ -122,7 +124,7 @@ async def scholar_result_to_claims(session, scholar_result):
     return cache(claims, title)
 
 
-async def async_scholar_results_to_claims(scholar_results, set_progress):
+async def async_scholar_results_to_claims(scholar_results, set_progress, set_claims_preview):
     async with aiohttp.ClientSession() as session:
         tasks = []
         for scholar_result in scholar_results:
@@ -140,6 +142,7 @@ async def async_scholar_results_to_claims(scholar_results, set_progress):
             set_progress(
                 i / len(tasks), f"Extracted claims from '{title}' ({i}/{len(tasks)})"
             )
+            set_claims_preview(claims)
         return claims
 
 
@@ -153,10 +156,10 @@ def get_event_loop():
     return loop
 
 
-def scholar_results_to_claims(scholar_results, set_progress):
+def scholar_results_to_claims(scholar_results, set_progress, set_claims_preview):
     loop = get_event_loop()
     result = loop.run_until_complete(
-        async_scholar_results_to_claims(scholar_results, set_progress)
+        async_scholar_results_to_claims(scholar_results, set_progress, set_claims_preview)
     )
     return result
 
@@ -253,67 +256,66 @@ p {
     if not question:
         return
 
-    bar = st.progress(0.0)
     progress_text = st.empty()
+    st.text("")
 
-    progress_text.write("Retrieving papers...")
+    progress_text.caption("Retrieving papers...")
 
     scholar_results = get_scholar_results(question, min_year)
 
     if not scholar_results:
         return
 
-    progress_text.write("Extracting claims...")
+    progress_text.caption("Extracting claims...")
+
+    claims_preview = st.empty()
 
     def set_progress(perc, text):
-        bar.progress(perc)
-        progress_text.write(text)
+        progress_text.caption(text)
 
-    claims = scholar_results_to_claims(scholar_results, set_progress)
-
-    unique_claims = get_unique_claims(claims)
-
-    bar.progress(1.0)
-
-    progress_text.write("Ranking claims...")
-
-    sorted_scored_claims = sort_score_claims(question, unique_claims)
-
-    seen_source_titles = set()
-
-    for (score, claim) in sorted_scored_claims:
+    def show_claim(claim):
         source = claim.source
-        if not source["title"] in seen_source_titles:
-            seen_source_titles.add(source["title"])
-            citation_count = source.get("citationCount")
-            authors = source.get("authors")
-            first_author_name = authors[0]["name"] if authors else "Unknown"
-            if len(authors) > 1:
-                author_text = f"{first_author_name} et al"
-            else:
-                author_text = first_author_name
-            # authors = " ".join([author["name"] for author in source.get("authors")])
-            year = source.get("year")
-            venue = source.get("venue")
-            if citation_count > min_citations and ((venue != "") or not require_venue):
-                st.markdown(
-                    f"""<span class="authors">{author_text}, {year}:</span>
+        citation_count = source.get("citationCount")
+        authors = source.get("authors")
+        first_author_name = authors[0]["name"] if authors else "Unknown"
+        if len(authors) > 1:
+            author_text = f"{first_author_name} et al"
+        else:
+            author_text = first_author_name
+        year = source.get("year")
+        venue = source.get("venue")
+        if citation_count > min_citations and ((venue != "") or not require_venue):
+            st.markdown(
+                f"""<span class="authors">{author_text}, {year}:</span>
 > {claim.text}
 """,
-                    unsafe_allow_html=True,
-                )
-                with st.expander(f""):
-                    st.markdown(
-                        f"""
+                unsafe_allow_html=True,
+            )
+            with st.expander(f""):
+                st.markdown(
+                    f"""
 [{source.get('title')}]({source.get('url')})
 
 {markdown_list(text_to_sentences(source.get("abstract")))}
 - *{citation_count} citations @ {venue}*
 """
-                    )
+                )        
+    
+    def set_claims_preview(claims):
+        c = claims_preview.container()
+        with c:
+            seen_paper_titles = set()
+            unique_claims = get_unique_claims(claims)
+            sorted_scored_claims = sort_score_claims(question, unique_claims)
+            for (score, claim) in sorted_scored_claims:
+                source = claim.source
+                if not source["title"] in seen_paper_titles:
+                    seen_paper_titles.add(source["title"])
+                    show_claim(claim)
 
-    bar.empty()
-    progress_text.write("")
+    claims = scholar_results_to_claims(scholar_results, set_progress, set_claims_preview)
+
+    progress_text.empty()
 
     encoded_question = urllib.parse.quote(question)
     st.markdown(
