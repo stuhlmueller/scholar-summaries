@@ -21,19 +21,13 @@ openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
 
-hash_funcs = {
-    spacy.language.Language: (lambda _: ("spacy_language", None)),
-    spacy.vocab.Vocab: (lambda _: ("spacy_vocab", None)),
-    CrossEncoder: (lambda _: ("cross_encoder", None)),
-}
 
-
-@st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
+@st.experimental_singleton
 def get_msmarco_encoder():
     return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2", max_length=512)
 
 
-@st.cache(hash_funcs=hash_funcs, allow_output_mutation=True)
+@st.experimental_singleton
 def get_spacy_nlp():
     try:
         os.system("python -m spacy download en_core_web_sm")
@@ -65,7 +59,7 @@ async def list_conclusions(session, text):
     return [line.strip("- ") for line in result_text.split("\n")]
 
 
-@st.cache(persist=True, show_spinner=False, allow_output_mutation=True)
+@st.cache(persist=True, show_spinner=False, allow_output_mutation=True, max_entries=30)
 def score_claims_openai(question, claims):
     documents = [claim.text for claim in claims]
     results = openai.Engine(id="babbage-search-index-v1").search(
@@ -167,7 +161,7 @@ def scholar_results_to_claims(scholar_results, set_progress):
     return result
 
 
-@st.cache(suppress_st_warning=True, persist=True, show_spinner=False)
+@st.cache(suppress_st_warning=True, persist=True, show_spinner=False, max_entries=30)
 def get_scholar_results(query, min_year):
     params = {
         "engine": "google_scholar",
