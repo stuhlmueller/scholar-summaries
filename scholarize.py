@@ -68,15 +68,14 @@ def score_claims_openai(question, claims):
     return [(datum["score"], claim) for (datum, claim) in zip(results["data"], claims)]
 
 
-def score_claims_msmarco(question, claims):
-    scores = msmarco_encoder.predict([(question, claim.text) for claim in claims])
-    return zip(scores, claims)
+@st.cache(persist=True, show_spinner=False, allow_output_mutation=True, max_entries=200)
+def score_claim_msmarco(question, claim):
+    scores = msmarco_encoder.predict([(question, claim.text)])
+    return scores[0]
 
 
 def sort_score_claims(question, claims):
-    if not claims:
-        return []
-    scored_claims = score_claims_msmarco(question, claims)
+    scored_claims = [(score_claim_msmarco(question, claim), claim) for claim in claims]
     return sorted(scored_claims, reverse=True)
 
 
