@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from dataclasses import dataclass
 
 
@@ -6,6 +6,8 @@ from dataclasses import dataclass
 class Claim:
     source: Any
     text: str
+    score: Optional[float] = None
+    question: Optional[str] = None
 
     def __lt__(self, other):
         if isinstance(other, Claim):

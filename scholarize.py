@@ -7,10 +7,13 @@ import streamlit as st
 import nest_asyncio
 import urllib
 
+import css
+import prompts
+
 from serpapi import GoogleSearch
 from sentence_transformers import CrossEncoder
 from claim import Claim
-from prompts import conclusions_prompt
+from types import SimpleNamespace
 
 
 semantic_scholar_api_key = os.environ["semantic_scholar_api_key"]
@@ -20,6 +23,10 @@ openai_api_key = os.environ["openai_api_key"]
 openai.api_key = openai_api_key
 
 semantic_scholar_headers = {"x-api-key": semantic_scholar_api_key}
+openai_headers = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {openai_api_key}",
+}
 
 
 @st.experimental_singleton
@@ -41,22 +48,28 @@ msmarco_encoder = get_msmarco_encoder()
 spacy_nlp = get_spacy_nlp()
 
 
-async def list_conclusions(session, text):
-    prompt = conclusions_prompt.format(text=text[-2000:])
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {openai_api_key}",
-    }
+async def openai_instruct_query(session, prompt):
     engine = "davinci-instruct-beta-v2"
     data = {"prompt": prompt, "max_tokens": 600, "temperature": 0}
     response = await session.post(
         f"https://api.openai.com/v1/engines/{engine}/completions",
         json=data,
-        headers=headers,
+        headers=openai_headers,
     )
     completion_result = await response.json()
-    result_text = completion_result["choices"][0]["text"].strip()
-    return [line.strip("- ") for line in result_text.split("\n")]
+    return completion_result["choices"][0]["text"].strip()
+
+
+async def answer_to_question(session, claim, question):
+    prompt = prompts.answer_to_subquestion.format(answer=claim.text, question=question)
+    question = await openai_instruct_query(session, prompt)
+    return claim, question
+
+
+async def abstract_to_claims(session, text):
+    prompt = prompts.abstract_to_claims.format(text=text[-2000:])
+    result = await openai_instruct_query(session, prompt)
+    return [line.strip("- ") for line in result.split("\n")]
 
 
 @st.cache(persist=True, show_spinner=False, allow_output_mutation=True, max_entries=30)
@@ -74,9 +87,11 @@ def score_claim_msmarco(question, claim):
     return scores[0]
 
 
-def sort_score_claims(question, claims):
-    scored_claims = [(score_claim_msmarco(question, claim), claim) for claim in claims]
-    return sorted(scored_claims, reverse=True)
+def score_claims(question, claims):
+    for claim in claims:
+        claim.score = score_claim_msmarco(question, claim)
+    sorted_claims = sorted(claims, reverse=True, key=lambda claim: claim.score)
+    return sorted_claims
 
 
 async def scholar_result_to_claims(session, scholar_result):
@@ -116,7 +131,7 @@ async def scholar_result_to_claims(session, scholar_result):
     abstract = paper_detail.get("abstract")
     if not abstract:
         return cache([], title)
-    conclusions = await list_conclusions(session, text=abstract)
+    conclusions = await abstract_to_claims(session, text=abstract)
     claims = []
     for conclusion in conclusions:
         claims.append(Claim(text=conclusion, source=paper_detail))
@@ -124,7 +139,7 @@ async def scholar_result_to_claims(session, scholar_result):
 
 
 async def async_scholar_results_to_claims(
-    scholar_results, set_progress, set_claims_preview
+    scholar_results, set_progress, set_claims_view
 ):
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -132,7 +147,6 @@ async def async_scholar_results_to_claims(
             task = asyncio.create_task(
                 scholar_result_to_claims(session, scholar_result)
             )
-            task.title = scholar_result.get("title")
             tasks.append(task)
         i = 0
         claims = []
@@ -143,7 +157,25 @@ async def async_scholar_results_to_claims(
             set_progress(
                 i / len(tasks), f"Extracted claims from '{title}' ({i}/{len(tasks)})"
             )
-            set_claims_preview(claims)
+            set_claims_view(claims)
+        return claims
+
+
+async def async_add_questions_to_claims(claims, question, set_progress):
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for claim in claims:
+            if not claim.question:
+                task = asyncio.create_task(answer_to_question(session, claim, question))
+                tasks.append(task)
+        i = 0
+        for task in asyncio.as_completed(tasks):
+            claim, question = await task
+            claim.question = question
+            i += 1
+            set_progress(
+                i / len(tasks), f"Computed question '{question}' ({i}/{len(tasks)})"
+            )
         return claims
 
 
@@ -157,12 +189,18 @@ def get_event_loop():
     return loop
 
 
-def scholar_results_to_claims(scholar_results, set_progress, set_claims_preview):
+def scholar_results_to_claims(scholar_results, set_progress, set_claims_view):
     loop = get_event_loop()
     result = loop.run_until_complete(
-        async_scholar_results_to_claims(
-            scholar_results, set_progress, set_claims_preview
-        )
+        async_scholar_results_to_claims(scholar_results, set_progress, set_claims_view)
+    )
+    return result
+
+
+def add_questions_to_claims(claims, question, set_progress):
+    loop = get_event_loop()
+    result = loop.run_until_complete(
+        async_add_questions_to_claims(claims, question, set_progress)
     )
     return result
 
@@ -207,43 +245,7 @@ def markdown_list(lines):
     return "\n".join(f"- {line}" for line in lines)
 
 
-def main():
-
-    # Setup
-
-    if "claims" not in st.session_state:
-        st.session_state["claims"] = {}
-
-    st.markdown(
-        """
-<style>
-.streamlit-expander {
-    border-color: #fff;
-}
-.streamlit-expanderHeader {
-    justify-content: right;
-}
-.authors {
-    color: #777;
-}
-p {
-    margin: .5rem 0px;
-}
-</style>""",
-        unsafe_allow_html=True,
-    )
-
-    # --
-
-    app_state = st.experimental_get_query_params()
-    url_question = app_state.get("q", [""])[0]
-    question = st.text_input(
-        "Research question",
-        value=url_question,
-        help="For example: How does creatine affect cognition?",
-    )
-    st.experimental_set_query_params(q=question)
-
+def get_options():
     with st.expander("Options"):
         col1, col2 = st.columns(2)
         with col1:
@@ -262,6 +264,72 @@ p {
             min_relevance_score = st.number_input(
                 "Relevance at least", min_value=-10.0, value=2.5
             )
+    return SimpleNamespace(
+        min_year=min_year,
+        min_citations=min_citations,
+        require_venue=require_venue,
+        min_relevance_score=min_relevance_score,
+    )
+
+
+def show_claim(claim, options):
+    source = claim.source
+    citation_count = source.get("citationCount")
+    authors = source.get("authors")
+    first_author_name = authors[0]["name"] if authors else "Unknown"
+    if len(authors) > 1:
+        author_text = f"{first_author_name} et al"
+    else:
+        author_text = first_author_name
+    year = source.get("year")
+    venue = source.get("venue")
+    st.markdown(
+        f"""<span class="authors">{claim.question}</span>
+> {claim.text}
+""",
+        unsafe_allow_html=True,
+    )
+    with st.expander(f"{citation_count} citations, {year}"):
+        st.markdown(
+            f"""
+[{source.get('title')}]({source.get('url')})
+
+{markdown_list(text_to_sentences(source.get("abstract")))}
+- *{citation_count} citations @ {venue}*
+- *Relevance: {claim.score:.2f}*
+"""
+        )
+
+
+def claim_is_visible(claim, options):
+    if claim.score < options.min_relevance_score:
+        return False
+    source = claim.source
+    if source.get("citationCount") < options.min_citations:
+        return False
+    venue = source.get("venue")
+    if (venue == "") and not options.require_venue:
+        return False
+    return True
+
+
+def main():
+
+    if "claims" not in st.session_state:
+        st.session_state["claims"] = {}
+
+    st.markdown(css.main, unsafe_allow_html=True)
+
+    app_state = st.experimental_get_query_params()
+    url_question = app_state.get("q", [""])[0]
+    question = st.text_input(
+        "Research question",
+        value=url_question,
+        help="For example: How does creatine affect cognition?",
+    )
+    st.experimental_set_query_params(q=question)
+
+    options = get_options()
 
     if not question:
         return
@@ -271,63 +339,37 @@ p {
 
     progress_text.caption("Retrieving papers...")
 
-    scholar_results = get_scholar_results(question, min_year)
+    scholar_results = get_scholar_results(question, options.min_year)
 
     if not scholar_results:
         return
 
     progress_text.caption("Extracting claims...")
 
-    claims_preview = st.empty()
+    claims_view = st.empty()
 
     def set_progress(perc, text):
         progress_text.caption(text)
 
-    def show_claim(claim, score):
-        source = claim.source
-        citation_count = source.get("citationCount")
-        authors = source.get("authors")
-        first_author_name = authors[0]["name"] if authors else "Unknown"
-        if len(authors) > 1:
-            author_text = f"{first_author_name} et al"
-        else:
-            author_text = first_author_name
-        year = source.get("year")
-        venue = source.get("venue")
-        if citation_count > min_citations and ((venue != "") or not require_venue):
-            st.markdown(
-                f"""<span class="authors">{author_text}, {year}:</span>
-> {claim.text}
-""",
-                unsafe_allow_html=True,
-            )
-            with st.expander(f""):
-                st.markdown(
-                    f"""
-[{source.get('title')}]({source.get('url')})
-
-{markdown_list(text_to_sentences(source.get("abstract")))}
-- *{citation_count} citations @ {venue}*
-- *Relevance: {score:.2f}*
-"""
-                )
-
-    def set_claims_preview(claims):
-        c = claims_preview.container()
+    def set_claims_view(claims):
+        c = claims_view.container()
         with c:
             seen_paper_titles = set()
             unique_claims = get_unique_claims(claims)
-            sorted_scored_claims = sort_score_claims(question, unique_claims)
-            for (score, claim) in sorted_scored_claims:
-                if score > min_relevance_score:
-                    source = claim.source
-                    if not source["title"] in seen_paper_titles:
-                        seen_paper_titles.add(source["title"])
-                        show_claim(claim, score)
+            scored_claims = score_claims(question, unique_claims)
+            filtered_claims = [
+                claim for claim in scored_claims if claim_is_visible(claim, options)
+            ]
+            claims_with_questions = add_questions_to_claims(
+                filtered_claims, question, set_progress
+            )
+            for claim in claims_with_questions:
+                source = claim.source
+                if not source["title"] in seen_paper_titles:
+                    seen_paper_titles.add(source["title"])
+                    show_claim(claim, options)
 
-    claims = scholar_results_to_claims(
-        scholar_results, set_progress, set_claims_preview
-    )
+    claims = scholar_results_to_claims(scholar_results, set_progress, set_claims_view)
 
     progress_text.empty()
 
