@@ -52,7 +52,7 @@ async def list_conclusions(session, text):
     response = await session.post(
         f"https://api.openai.com/v1/engines/{engine}/completions",
         json=data,
-        headers=headers
+        headers=headers,
     )
     completion_result = await response.json()
     result_text = completion_result["choices"][0]["text"].strip()
@@ -123,7 +123,9 @@ async def scholar_result_to_claims(session, scholar_result):
     return cache(claims, title)
 
 
-async def async_scholar_results_to_claims(scholar_results, set_progress, set_claims_preview):
+async def async_scholar_results_to_claims(
+    scholar_results, set_progress, set_claims_preview
+):
     async with aiohttp.ClientSession() as session:
         tasks = []
         for scholar_result in scholar_results:
@@ -158,7 +160,9 @@ def get_event_loop():
 def scholar_results_to_claims(scholar_results, set_progress, set_claims_preview):
     loop = get_event_loop()
     result = loop.run_until_complete(
-        async_scholar_results_to_claims(scholar_results, set_progress, set_claims_preview)
+        async_scholar_results_to_claims(
+            scholar_results, set_progress, set_claims_preview
+        )
     )
     return result
 
@@ -248,9 +252,16 @@ p {
             )
         with col2:
             min_citations = st.number_input("Citations at least", min_value=0, value=10)
-        require_venue = st.checkbox(
-            "Only include publications with venue (journal or conference)", value=True
-        )
+        col3, col4 = st.columns(2)
+        with col3:
+            require_venue = st.checkbox(
+                "Only include publications with venue (journal or conference)",
+                value=True,
+            )
+        with col4:
+            min_relevance_score = st.number_input(
+                "Relevance at least", min_value=-10.0, value=2.5
+            )
 
     if not question:
         return
@@ -272,7 +283,7 @@ p {
     def set_progress(perc, text):
         progress_text.caption(text)
 
-    def show_claim(claim):
+    def show_claim(claim, score):
         source = claim.source
         citation_count = source.get("citationCount")
         authors = source.get("authors")
@@ -297,9 +308,10 @@ p {
 
 {markdown_list(text_to_sentences(source.get("abstract")))}
 - *{citation_count} citations @ {venue}*
+- *Relevance: {score:.2f}*
 """
-                )        
-    
+                )
+
     def set_claims_preview(claims):
         c = claims_preview.container()
         with c:
@@ -307,12 +319,15 @@ p {
             unique_claims = get_unique_claims(claims)
             sorted_scored_claims = sort_score_claims(question, unique_claims)
             for (score, claim) in sorted_scored_claims:
-                source = claim.source
-                if not source["title"] in seen_paper_titles:
-                    seen_paper_titles.add(source["title"])
-                    show_claim(claim)
+                if score > min_relevance_score:
+                    source = claim.source
+                    if not source["title"] in seen_paper_titles:
+                        seen_paper_titles.add(source["title"])
+                        show_claim(claim, score)
 
-    claims = scholar_results_to_claims(scholar_results, set_progress, set_claims_preview)
+    claims = scholar_results_to_claims(
+        scholar_results, set_progress, set_claims_preview
+    )
 
     progress_text.empty()
 
